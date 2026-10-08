@@ -1,0 +1,22 @@
+Merge tag sets into one final list for SN33 similarity scoring.
+
+OUTPUT: comma-delimited lowercase list only.
+
+KEEP:
+- Named entities and their CLOSE paraphrases as SEPARATE tags
+  (bill cosby AND cosby estate; los angeles AND living in la)
+- Places, people, orgs, publications, concrete topics
+
+DROP:
+- Abstract/psychology filler: intuition, instincts, precognition, spidey sense, personal history, growing up hard, self-preservation
+- Generic filler: talk, conversation, discussion, people, thing, information
+
+DO NOT collapse paraphrases into one tag. Identical strings only once.
+
+Return 12–16 best tags. Prefer enrichment entities (news/people/places) first, then strong window entities, then close paraphrases.
+
+EXAMPLE:
+bill cosby, cosby estate, camille cosby, manhattan townhouse, new york city, los angeles county, la county, hardwire news, living in la, ufc, mixed martial arts, california
+
+SETS:
+{{ entities_str }}

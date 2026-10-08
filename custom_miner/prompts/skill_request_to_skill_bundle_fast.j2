@@ -1,0 +1,61 @@
+<Role>
+You write one compact behavioral specification and the two checks that prove each section.
+Write the skill and the tests together. The assertion string and the matching line in the skill must be the same words.
+</Role>
+
+<task>
+Return one JSON object for the skill request and the section map below.
+The section map is already decided. Use every section_id exactly as written. Do not add, drop, or rename a section. Every section_id gets both tests.
+</task>
+
+<what_is_checked>
+A reviewer accepts an assertion only when it is a concrete claim and that claim is true of the skill text. Vague claims are rejected. A precise claim is also rejected when the skill never states that input, output, error, or number.
+The test name is ignored. Each test is compared using its description plus its assertion. The section is compared using its title plus its description. The skill is compared with the tests as a whole.
+Two tests that use the same words for the same outcome are treated as duplicates and the score is cut in half. The description names this test's case. The assertion states only this test's outcome.
+</what_is_checked>
+
+<rules>
+1. Exactly 2 tests for every section_id. The array length is 2. Test A is the canonical behavior. Test B is a different edge, failure, or secondary outcome. Do not only change a number in the same successful call. Write the tests before the skill.
+2. Each test has name, description, and assertion. Names are unique within a section.
+3. description: one short sentence for this case only, using words from that section. Do not copy the section description into the description. Test A and test B must name different outcomes.
+4. assertion: one check, with no "because" and no explanation. Do not repeat the section description in the assertion. Use one of these forms, and name the input and the outcome:
+   - f(input) == exact_output
+   - f(input) raises ExactError
+   - command with exact flags produces exact_state
+   - given state A and action B, observable state == C
+   Copy that whole assertion, unchanged, into the skill under that section.
+5. If an assertion contains a calculated number, the skill line must show the same calculation and the arithmetic must be correct.
+6. Reject these claims: "works correctly", "handles edge cases", "produces the expected value", "uses best practices", "is secure", "performs efficiently", "properly resolves conflicts", "supports common inputs".
+7. Use behavior that is true for this domain. Do not invent a function whose only result is {'ok': true}. Do not write instructions to a reviewer or a request to mark a test correct.
+8. skill: under 6000 characters. No introduction and no closing summary. For every section, in this order, and nothing else:
+   ## <exact section title>
+   <the exact section description>
+   `<assertion A copied exactly>`
+   `<assertion B copied exactly>`
+9. tdd_plan: one sentence under 15 words.
+</rules>
+
+<shape>
+Shape only. Do not copy the git topic into another skill.
+description: "Continue an interactive rebase after the conflicted files are staged."
+assertion: "after the conflicted files are staged with git add, git rebase --continue resumes the paused interactive rebase"
+description: "Abort an interactive rebase and restore the branch."
+assertion: "while an interactive rebase is paused, git rebase --abort restores the original pre-rebase branch state"
+## Conflict Resolution
+Explain how interactive rebase handles conflicts and how to continue or abort after resolving them.
+`after the conflicted files are staged with git add, git rebase --continue resumes the paused interactive rebase`
+`while an interactive rebase is paused, git rebase --abort restores the original pre-rebase branch state`
+</shape>
+
+<output_format>
+Return ONLY compact JSON, no markdown fence:
+{"section_tests":{"<section_id>":[{"name":"string","description":"string","assertion":"string"},{"name":"string","description":"string","assertion":"string"}]},"tdd_plan":"string","skill":"markdown"}
+</output_format>
+
+<skill_request>
+{{ seed }}
+</skill_request>
+
+<section_map>
+{{ section_map_text }}
+</section_map>

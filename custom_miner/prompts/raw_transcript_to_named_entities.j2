@@ -1,0 +1,16 @@
+Extract distinct named entities from this document for SN33 embedding similarity scoring.
+
+RULES:
+1. Prefer exact spans that appear in the text.
+2. One form per entity — do NOT flood with clones (eddie lin + councilmember eddie lin only if both clearly useful; prefer the fuller form once).
+3. Return 10–14 distinct entities when rich. Minimum 8.
+4. Cover different people/orgs/places/docs — diversity over repetition.
+5. Comma-delimited list ONLY. No types in parentheses. No commentary. Do not invent.
+
+ENTITY TYPES: People, Organizations, Locations, Laws/Statutes, Projects, Committees, Document titles.
+
+GOOD EXAMPLE:
+eddie lin, seattle city council, seattle city hall, dan strauss, comprehensive plan, washington, inf 2934, joy hollingsworth
+
+TRANSCRIPT:
+{{ raw_transcript }}

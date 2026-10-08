@@ -1,0 +1,20 @@
+Extract SAME-DOMAIN tags from enrichment for SN33 scoring.
+
+OUTPUT: comma-delimited lowercase list. No commentary. 8–12 tags. Spaced words only.
+
+Every tag must be a concrete entity/term from THIS story's domain:
+people, orgs, places/regions, industry phrases, platforms (short names, never URLs).
+
+Add same-domain uniques = OTHER evidenced entities in that cluster (ufc/marvel next to cosby;
+life sciences / ai-driven drug discovery next to digital health) — NOT abstract words
+(media, articles, investment, tune).
+
+GOOD:
+digital health, artificial intelligence, galen growth, healthtech 250, asia, europe,
+life sciences, ai-driven drug discovery, hugging face, google cloud, telangana
+
+BAD:
+media, articles, publishing, tune, investment, https://example.com/x
+
+ENRICHMENT:
+{{ enrichment_content }}

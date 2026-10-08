@@ -1,0 +1,19 @@
+Split these keywords into 2 groups: good English keywords and malformed keywords.
+
+KEEP as good (important for scoring):
+- multi-word proper names and places (bill cosby, los angeles county, seattle city council)
+- short aliases and abbreviations that are meaningful (la, nyc, ufc, mma, inf 2934)
+- topical phrases (cosby estate, mixed martial arts, property records, comprehensive plan)
+- publication/domain-like tags (hardwire news, hardwire.news)
+
+ONLY mark malformed if truly broken:
+- random character soup, empty tokens, pure numbers, emoji, or unreadable compounds
+- generic filler: talk, conversation, discussion, thing, stuff, information
+
+Return exactly this format:
+good English keywords: tag1, tag2, tag3
+malformed keywords: bad1, bad2
+
+<keywords>
+{{tags_string}}
+</keywords>

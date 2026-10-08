@@ -1,0 +1,22 @@
+# Core dependencies
+python-dotenv==1.0.1
+bittensor==10.3.0
+torch==2.1.1
+openai==1.30.3
+loguru==0.7.0
+wandb==0.18.1
+# For named entities task
+beautifulsoup4==4.14.3
+pypdf==6.6.0
+
+# Hybrid conversation GT predictors (FAISS + concept classifier)
+faiss-cpu>=1.7.4
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# Dependencies for compatibility
+pydantic==2.7.1
+typing-extensions==4.8.0
+httpx==0.27.2
+async-substrate-interface==2.0.2
+pynacl==1.6.2

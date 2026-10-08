@@ -1,0 +1,123 @@
+from typing import List
+import bittensor as bt
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+
+class PromptManager:
+    def __init__(self, prompt_dir: Path):
+        if not prompt_dir.is_dir():
+            raise FileNotFoundError(f"Prompt directory not found: {prompt_dir}")
+        self.env = Environment(loader=FileSystemLoader(prompt_dir))
+
+    def raw_transcript_to_named_entities_prompt(self, raw_transcript: str) -> str:
+        if not raw_transcript.strip():
+            raise ValueError("raw_transcript cannot be empty.")
+        return self._get("raw_transcript_to_named_entities.j2", raw_transcript=raw_transcript)
+    
+    def raw_webpage_to_named_entities_prompt(self, raw_webpage: str) -> str:
+        if not raw_webpage.strip():
+            raise ValueError("raw_transcript cannot be empty.")
+        return self._get("raw_webpage_to_named_entities.j2", raw_webpage=raw_webpage)
+    
+    def combine_named_entities_prompt(self, named_entities: list[list]) -> str:
+        entities_str = ''
+        for i in range(len(named_entities)):
+            entities_str += f"Set {i} :\n{','.join(named_entities[i])}\n\n"
+        return self._get("combine_named_entities_prompt.j2", entities_str=entities_str)
+
+    def conversation_to_metadata_prompt(self, conversation_to_analyze: str) -> str:
+        if not conversation_to_analyze.strip():
+            raise ValueError("conversation_to_analyze cannot be empty.")
+        return self._get("conversation_to_metadata.j2", conversation_to_analyze=conversation_to_analyze)
+
+    def conversation_to_metadata_coding_prompt(self, conversation_to_analyze: str) -> str:
+        if not conversation_to_analyze.strip():
+            raise ValueError("conversation_to_analyze cannot be empty.")
+        return self._get("conversation_to_metadata_coding.j2", conversation_to_analyze=conversation_to_analyze)
+
+    def conversation_quality_prompt(self, transcript_text: str) -> str:
+        if not transcript_text:
+            raise ValueError("transcript_text cannot be empty.")
+        return self._get("conversation_quality.j2", transcript_text=transcript_text)
+    
+    def survey_tag_prompt(self, survey_question: str, free_form_comment:str) -> str:
+        if not survey_question.strip() or not free_form_comment.strip():
+            raise ValueError("survey_question and comment cannot be empty.")
+        return self._get("survey_tag.j2", survey_question=survey_question, free_form_comment=free_form_comment)
+    
+    def validate_tags_prompt(self, tags: List[str]) -> str:
+        if not tags:
+            raise ValueError("tags cannot be empty.")
+        return self._get("validate_tags.j2", tags_string=",".join(tags))
+
+    def website_to_metadata_prompt(self, website_content: str) -> str:
+        if not website_content.strip():
+            raise ValueError("website_content cannot be empty.")
+        return self._get("website_to_metadata.j2", website_content=website_content)
+
+    def website_to_metadata_coding_prompt(self, website_content: str) -> str:
+        if not website_content.strip():
+            raise ValueError("website_content cannot be empty.")
+        return self._get("website_to_metadata_coding.j2", website_content=website_content)
+
+    def skill_to_metadata_prompt(self, skill_markdown: str) -> str:
+        if not skill_markdown.strip():
+            raise ValueError("skill_markdown cannot be empty.")
+        return self._get("skill_to_metadata.j2", skill_markdown=skill_markdown)
+
+    def skill_request_to_section_map_prompt(self, seed: str) -> str:
+        if not seed.strip():
+            raise ValueError("seed cannot be empty.")
+        return self._get("skill_request_to_section_map.j2", seed=seed)
+
+    def skill_request_to_skill_prompt(self, seed: str, section_map_text: str) -> str:
+        if not seed.strip():
+            raise ValueError("seed cannot be empty.")
+        return self._get("skill_request_to_skill.j2", seed=seed, section_map_text=section_map_text)
+
+    def skill_request_to_skill_bundle_prompt(self, seed: str, section_map_text: str) -> str:
+        if not seed.strip():
+            raise ValueError("seed cannot be empty.")
+        return self._get("skill_request_to_skill_bundle_fast.j2", seed=seed, section_map_text=section_map_text)
+
+    def skill_to_tdd_plan_prompt(self, skill_markdown: str, section_map_text: str) -> str:
+        if not skill_markdown.strip():
+            raise ValueError("skill_markdown cannot be empty.")
+        return self._get("skill_to_tdd_plan.j2", skill_markdown=skill_markdown, section_map_text=section_map_text)
+
+    def skill_to_section_tests_prompt(self, skill_markdown: str, tdd_plan: str, section_map_text: str) -> str:
+        if not skill_markdown.strip():
+            raise ValueError("skill_markdown cannot be empty.")
+        return self._get("skill_to_section_tests.j2", skill_markdown=skill_markdown, tdd_plan=tdd_plan, section_map_text=section_map_text)
+
+    def judge_section_tests_prompt(self, skill_markdown: str, section_map_text: str, section_tests_text: str) -> str:
+        if not skill_markdown.strip():
+            raise ValueError("skill_markdown cannot be empty.")
+        return self._get("judge_section_tests.j2", skill_markdown=skill_markdown, section_map_text=section_map_text, section_tests_text=section_tests_text)
+
+    def enrichment_to_metadata_prompt(self, enrichment_content: str) -> str:
+        if not enrichment_content.strip():
+            raise ValueError("enrichment_content cannot be empty.")
+        return self._get("enrichment_to_metadata.j2", enrichment_content=enrichment_content)
+
+    def enrichment_to_metadata_coding_prompt(self, enrichment_content: str) -> str:
+        if not enrichment_content.strip():
+            raise ValueError("enrichment_content cannot be empty.")
+        return self._get("enrichment_to_metadata_coding.j2", enrichment_content=enrichment_content)
+
+    def enrichment_to_named_entities_prompt(self, enrichment_content: str) -> str:
+        if not enrichment_content.strip():
+            raise ValueError("enrichment_content cannot be empty.")
+        return self._get("enrichment_to_named_entities.j2", enrichment_content=enrichment_content)
+
+    def _get(self, prompt_location: str, **kwargs) -> str:
+        try:
+            template = self.env.get_template(prompt_location)
+            return template.render(**kwargs)
+        except Exception as e:
+            bt.logging.error(f"Error processing prompt {prompt_location}: {e}")
+            raise e
+
+
+# Create a singleton instance for easy access
+prompt_manager = PromptManager(Path(__file__).parent / "prompts")

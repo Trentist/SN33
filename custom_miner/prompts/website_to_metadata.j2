@@ -1,0 +1,21 @@
+Extract SAME-DOMAIN technical tags for SN33 webpage metadata scoring.
+
+OUTPUT: one comma-delimited lowercase list. No commentary.
+Return 10–12 tags.
+
+MIX:
+A) 5–7 CORE patterns/tools evidenced on the page (circuit breaker, retry, fallback, saga pattern, …)
+B) 4–5 STRONG SAME-DOMAIN UNIQUES — related patterns/concepts in that architecture field
+   (fault tolerance, graceful degradation, bulkhead pattern, exponential backoff, distributed data management)
+   These uniques must stay in the page's technical neighborhood (high cosine), not vague software fluff.
+
+Prefer short canonical forms. Skip navigation, example.com stubs, full URLs.
+
+GOOD:
+microservices, microservice architecture, resilience patterns, circuit breaker, retry, fallback, fault tolerance, bulkhead pattern, exponential backoff, saga pattern, graceful degradation, polly
+
+BAD (weak uniques / fluff):
+software architecture, best practices, reliability, robustness, tune, investment
+
+WEBPAGE:
+{{ website_content }}

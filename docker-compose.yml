@@ -1,0 +1,14 @@
+services:
+  cgp_miner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:${PORT}"
+      - "${LOCAL_CGP_API_PORT}:${LOCAL_CGP_API_PORT}"
+    restart: on-failure
+    volumes:
+      - ${HOME}/.bittensor:/root/.bittensor
+      - ./readyai_api_data.json:/readyai_api_data.json

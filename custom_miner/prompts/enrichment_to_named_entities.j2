@@ -1,0 +1,14 @@
+Extract distinct named entities from this enrichment for SN33 scoring.
+
+RULES:
+1. Concrete entities only (people, orgs, places, titles, statutes).
+2. One canonical form per entity — do not emit short+long clones of the same name.
+3. Return 6–12 entities when rich; at least 4 if any exist.
+4. Comma-delimited list ONLY. No types, commentary, markdown.
+5. Do not invent entities. Skip AVIF/binary junk and off-topic noise.
+
+EXAMPLE:
+bill cosby, camille cosby, manhattan, new york city, hardwire news, los angeles county
+
+ENRICHMENT:
+{{ enrichment_content }}

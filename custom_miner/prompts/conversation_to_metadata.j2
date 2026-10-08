@@ -1,0 +1,23 @@
+Analyze this partial window of a longer conversation.
+
+Predict the concise topic-interest tags that would most likely
+be generated if an LLM analyzed the COMPLETE conversation.
+
+Generate:
+- explicit named topics/entities visible in this window
+- major high-level topics represented by those entities
+- likely broader conversation topics only when strongly implied
+
+Prefer short conventional phrases that another LLM would naturally
+use as metadata tags.
+
+Avoid generic tags such as:
+discussion, conversation, people, life, information, opinion.
+
+Return 12 candidate tags maximum.
+Lowercase.
+Comma-delimited only. No commentary.
+Spaced words only (never fused forms like "seriesg").
+
+CONVERSATION:
+{{ conversation_to_analyze }}

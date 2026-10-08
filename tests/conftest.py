@@ -1,0 +1,192 @@
+# tests/conftest.py
+import os
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
+from dotenv import find_dotenv
+from dotenv import load_dotenv
+
+from conversationgenome.llm.llm_openai import LlmOpenAI
+import neurons.validator as validator_module
+from tests.mocks.DummyData import DummyData
+
+load_dotenv(find_dotenv(usecwd=True), override=False)
+
+# Set to True for faster tests with smaller task bundles
+fast_tests = True
+
+
+@pytest.fixture(autouse=True)
+def reset_llm_overrides_locked():
+    """Some tests (e.g. those constructing a real Validator) exercise the real
+    ConfigLib.state global dict via configure_llm_override_lockdown(), which can leak
+    llm_overrides_locked=True to later tests that read the real (unmocked) c.get. Reset
+    it after every test so state never leaks across the suite."""
+    yield
+    from conversationgenome.ConfigLib import c as real_c
+    real_c.state.setdefault("system", {})["llm_overrides_locked"] = False
+
+
+@pytest.fixture(autouse=True)
+def patch_random_and_config(monkeypatch):
+    """Global defaults: deterministic random + sensible c.get map."""
+    monkeypatch.setattr(validator_module.random, "sample", lambda seq, n: seq[:n])
+    monkeypatch.setattr(validator_module.random, "shuffle", lambda seq: None)
+
+    defaults = {
+        # validator section
+        ("validator", "miners_per_window"): 3,
+        ("validator", "miners_per_task"): 6,
+        ("validator", "number_of_task_bundles"): 10,
+        ("validator", "number_of_task_per_bundle"): 5,
+        ("validator", "minimum_number_of_tasks"): 10,
+        # convo_window section
+        ("convo_window", "min_lines"): 5,
+        ("convo_window", "max_lines"): 10,
+        ("convo_window", "overlap_lines"): 2,
+        # system section
+        ("system", "mode"): "test",
+        ("system", "scoring_version"): 0.1,
+        ("system", "netuid"): -1,
+        ("system", "llm_overrides_locked"): False,
+        # llm section
+        ("llm", "type"): "openai",
+        ("llm", "embeddings_model"): "text-embedding-3-large",
+        ("llm", "model"): "gpt-4o",
+        # network section
+        ("network", "mainnet"): 33,
+        ("network", "testnet"): 138,
+    }
+
+    if fast_tests:
+        defaults.update(
+            {
+                ("validator", "number_of_task_bundles"): 2,
+                ("validator", "number_of_task_per_bundle"): 2,
+                ("validator", "minimum_number_of_tasks"): 2
+            }
+        )
+
+    def get(section, key, default=None):
+        if section == "env":
+            return os.getenv(key, default)
+        return defaults.get((section, key), default)
+
+    monkeypatch.setattr(validator_module.c, "get", get)
+
+
+@pytest.fixture(autouse=True)
+def patch_uids(monkeypatch):
+    """Make miner selection deterministic."""
+    import conversationgenome.utils.uids as uids
+
+    assert validator_module.conversationgenome.utils.uids is uids
+    monkeypatch.setattr(uids, "get_random_uids", lambda self, k: [0, 1, 2][:k])
+
+
+@pytest.fixture
+def fake_libs(monkeypatch):
+    """
+    Patch ValidatorLib, WandbLib, Utils.append_log.
+    Return the created fake instances so tests can tweak behaviors.
+    """
+
+    # Removed invalid patch for to_mining_task (no such method on bundle)
+    class _FakeVL:
+        def __init__(self):
+            self.calls = {"reserve_task_bundle": 0, "put_task": 0}
+
+        async def reserve_task_bundle(self, netuid=None, *, batch_num=None, return_indexed_windows=True):
+            self.calls["reserve_task_bundle"] += 1
+            return DummyData.conversation_tagging_task_bundle()
+
+        async def put_task(self, *a, **k):
+            self.calls["put_task"] += 1
+            return True
+
+    vl_instance = _FakeVL()
+    monkeypatch.setattr(validator_module, "ValidatorLib", lambda: vl_instance)
+
+    class _FakeWB:
+        def __init__(self):
+            self.logs = []
+
+        def log(self, *a, **k):
+            self.logs.append((a, k))
+
+        def init_wandb(self, *_a, **_k): ...
+        def end_log_wandb(self, *_a, **_k): ...
+
+    wb_instance = _FakeWB()
+    monkeypatch.setattr(validator_module, "WandbLib", lambda: wb_instance)
+
+    monkeypatch.setattr(validator_module.Utils, "append_log", lambda *a, **k: None)
+
+    import conversationgenome.utils.uids as uids
+
+    class _FakeDendrite:
+        forward = AsyncMock(return_value=[])
+
+    return {
+        "vl": vl_instance,
+        "wandb": wb_instance,
+        "uids": uids,
+        "dendrite": _FakeDendrite(),
+    }
+
+
+@pytest.fixture
+def bare_validator(monkeypatch):
+    """
+    Create a Validator without running BaseValidatorNeuron.__init__.
+    Everything heavy is mocked. You can still override pieces per test.
+    """
+    monkeypatch.setattr(validator_module.BaseValidatorNeuron, "__init__", lambda self, config=None: None)
+
+    v = validator_module.Validator.__new__(validator_module.Validator)
+    v.config = type("C", (), {"netuid": 33, "neuron": type("N", (), {"sample_size": 3})()})()
+    v.responses = []
+    v.initial_status_codes = {}
+    v.final_status_codes = {}
+    v.committed_endpoints = {}
+    v._commitment_cache = {}
+    v._uid_refresh_timestamps = {}
+
+    v.axon = type("Ax", (), {"wallet": type("W", (), {"hotkey": type("H", (), {"ss58_address": "HK"})()})()})()
+    v.metagraph = type(
+        "MG",
+        (),
+        {
+            "n": type("N", (), {"item": staticmethod(lambda: 3)})(),
+            "axons": [type("A", (), {"hotkey": "hk0"})(), type("A", (), {"hotkey": "hk1"})(), type("A", (), {"hotkey": "hk2"})()],
+            "hotkeys": ["hk0", "hk1", "hk2"],
+        },
+    )()
+
+    v.dendrite = type("D", (), {"forward": AsyncMock(return_value=[])})()
+    v.update_scores = lambda *a, **k: None
+    v.load_state = lambda: None
+
+    import asyncio as _asyncio
+    v._dispatch_lock = _asyncio.Lock()
+    v._last_dispatch_time = 0.0
+    v._min_dispatch_interval = 0.0
+
+    return v
+
+
+@pytest.fixture
+def config_override(monkeypatch):
+    """
+    Per-test override for c.get using a dict with tuple keys:
+      {("section","key"): value, ...}
+    """
+    orig_get = validator_module.c.get
+
+    def apply(pairs: dict):
+        def wrapped(section, key, default=None, _orig=orig_get, _pairs=pairs):
+            return _pairs.get((section, key), _orig(section, key, default))
+
+        monkeypatch.setattr(validator_module.c, "get", wrapped)
+
+    return apply
