@@ -49,8 +49,19 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
-def embed_tags(llm: Any, tags: list[str]) -> dict[str, np.ndarray]:
-    """Batch-embed tags with the active miner embedding client."""
+def embed_tags(
+    llm: Any,
+    tags: list[str],
+    *,
+    timeout: float | None = None,
+    attempts: int = 3,
+    retry_sleep: float | None = None,
+) -> dict[str, np.ndarray]:
+    """Batch-embed tags with the active miner embedding client.
+
+    ``timeout`` is the per-request limit in seconds. ``retry_sleep`` replaces
+    the default 2s, 4s, 6s backoff, which is long enough to miss a 12s task.
+    """
     clean: list[str] = []
     seen: set[str] = set()
     for tag in tags:
@@ -64,19 +75,26 @@ def embed_tags(llm: Any, tags: list[str]) -> dict[str, np.ndarray]:
     client = getattr(llm, "client", None)
     model = getattr(llm, "embedding_model", None) or "openai/text-embedding-3-small"
     if client is not None and hasattr(client, "embeddings"):
-        for attempt in range(3):
+        caller = client
+        if timeout is not None and hasattr(client, "with_options"):
+            caller = client.with_options(timeout=timeout)
+        for attempt in range(max(1, attempts)):
             try:
                 vectors = {}
                 for start in range(0, len(clean), 32):
                     chunk = clean[start : start + 32]
-                    response = client.embeddings.create(input=chunk, model=model)
+                    response = caller.embeddings.create(input=chunk, model=model)
                     for item, tag in zip(response.data, chunk):
                         vectors[tag] = np.asarray(item.embedding, dtype=np.float32)
                 if vectors:
                     return vectors
             except Exception:
                 vectors = {}
-                time.sleep(2.0 * (attempt + 1))
+                if attempt + 1 >= attempts:
+                    break
+                pause = 2.0 * (attempt + 1) if retry_sleep is None else retry_sleep
+                if pause > 0:
+                    time.sleep(pause)
 
     batch = getattr(llm, "get_vector_embeddings_batch", None)
     if callable(batch):

@@ -1,4 +1,5 @@
 from custom_miner.skill_pipeline.normalize import _is_concrete
+from custom_miner.skill_pipeline.normalize import stretch_description
 from custom_miner.skill_pipeline.normalize import normalize_skill_bundle
 from custom_miner.skill_pipeline.policies import get_skill_policy
 from custom_miner.skill_pipeline.proxy_score import hidden_subsets
@@ -29,7 +30,7 @@ def test_embed_text_matches_validator_shape():
     assert "\n" not in text
 
 
-def test_two_tests_split_a_comma_separated_section_sentence():
+def test_two_tests_share_the_full_section_sentence_and_differ_by_case():
     sections = [
         {
             "section_id": "s1",
@@ -51,12 +52,30 @@ def test_two_tests_split_a_comma_separated_section_sentence():
         sections,
     )
     first, second = (test["description"] for test in out["section_tests"]["s1"])
-    assert "Events of Default and Enforcement Remedies" in first
+    assert first.startswith("Events of Default and Enforcement Remedies:")
     assert "notice and cure periods" in first
+    assert "application of proceeds" in first
+    assert "notice and cure periods" in second
     assert "application of proceeds" in second
-    assert "application of proceeds" not in first
     assert "Cure before acceleration" in first
+    assert "Apply sale proceeds" in second
     assert first != second
+    assert "Define defaults" in out["skill"]
+    assert "Assertion: accelerate(notice_sent=False) == False" in out["skill"]
+
+
+def test_stretch_keeps_the_unique_tail_inside_the_field_cap():
+    stretched = stretch_description(
+        "x" * 1000,
+        "apply_proceeds(100) == 10",
+        "notice and cure, application of proceeds",
+        half=1,
+        limit=1000,
+        title="Events of Default",
+    )
+    assert len(stretched) <= 1000
+    assert "Only the Events of Default check 2" in stretched
+    assert "apply_proceeds(100) == 10" in stretched
 
 
 def test_prepare_keeps_two_and_drops_vague():

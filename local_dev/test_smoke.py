@@ -64,7 +64,8 @@ def test_normalize_locks_skill_to_assertions():
     assert "Basic ASCII transformation" in out["section_tests"]["s1"][0]["description"]
     assert "slugify('A B') == 'a-b'" in out["skill"]
     assert 'slugify("Café") == "cafe"' in out["skill"]
-    assert "this skill is discarded" in out["skill"]
+    assert "Lowercase the input" in out["skill"]
+    assert "this skill is discarded" not in out["skill"]
     assert "s2" in out["section_tests"]
 
 

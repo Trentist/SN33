@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 import os
 import time
 import typing
@@ -26,7 +27,6 @@ from conversationgenome.base.miner import BaseMinerNeuron
 from conversationgenome.ConfigLib import c
 from conversationgenome.miner.MinerLib import MinerLib
 from conversationgenome.protocol import CgSynapse
-from conversationgenome.task import Task
 from conversationgenome.task.task_factory import parse_task
 
 
@@ -64,14 +64,37 @@ class Miner(BaseMinerNeuron):
             CgSynapse: The synapse object with the 'cgp_output' field
 
         """
-        result = None
+        results = None
         error_msg = None
         started = time.perf_counter()
         try:
-            task: Task = parse_task(synapse.cgp_input[0]["task"])
+            items = list(synapse.cgp_input or [])
+            if not items:
+                raise ValueError("empty cgp_input")
 
-            bt.logging.info(f"Miner received task of type {task.type}")
-            result = await self._miner_lib.do_mining(task=task)
+            tasks = []
+            parse_errors: list[str] = []
+            for item in items:
+                try:
+                    tasks.append(parse_task(item["task"]))
+                except Exception as exc:
+                    parse_errors.append(str(exc))
+                    tasks.append(None)
+            if not any(task is not None for task in tasks):
+                raise ValueError(parse_errors[0] if parse_errors else "no parseable task")
+
+            types = [task.type if task is not None else "invalid" for task in tasks]
+            if len(tasks) == 1:
+                bt.logging.info(f"Miner received task of type {types[0]}")
+            else:
+                bt.logging.info(f"Miner received {len(tasks)} tasks together: {types}")
+
+            async def _one(task):
+                if task is None:
+                    return {"tags": [], "vectors": None}
+                return await self._miner_lib.do_mining(task=task)
+
+            results = list(await asyncio.gather(*(_one(task) for task in tasks)))
         except Exception as e:
             error_msg = str(e)
             bt.logging.error(f"Error extracting task from synapse: {e}")
@@ -90,7 +113,7 @@ class Miner(BaseMinerNeuron):
                 validator_hotkey=getattr(getattr(synapse, "dendrite", None), "hotkey", None),
                 netuid=getattr(self.config, "netuid", None),
                 axon_hotkey=miner_hk,
-                mine_result=result,
+                mine_result=(results[0] if results and len(results) == 1 else results),
                 elapsed_s=time.perf_counter() - started,
                 error=error_msg,
             )
@@ -99,7 +122,7 @@ class Miner(BaseMinerNeuron):
         except Exception as e:
             bt.logging.warning(f"Could not save miner problem: {e}")
 
-        synapse.cgp_output = [result]
+        synapse.cgp_output = results if results else [{"tags": [], "vectors": None}]
         return synapse
 
     async def blacklist(self, synapse: CgSynapse) -> typing.Tuple[bool, str]:

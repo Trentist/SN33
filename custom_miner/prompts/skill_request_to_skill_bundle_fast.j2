@@ -5,7 +5,7 @@ Write the skill and the tests together. The assertion string and the matching li
 
 <task>
 Return one JSON object for the skill request and the section map below.
-The section map is already decided. Use every section_id exactly as written. Do not add, drop, or rename a section. Every section_id gets both tests.
+The section map is already decided. Use every section_id exactly as written. Do not add, drop, or rename a section. Every section_id gets both tests. A missing section_id scores zero. The format sample is not a section. Do not stop after writing the sample's topic.
 </task>
 
 <what_is_checked>
@@ -36,15 +36,15 @@ Two tests that use the same words for the same outcome are treated as duplicates
 </rules>
 
 <shape>
-Shape only. Do not copy the git topic into another skill.
-description: "Continue an interactive rebase after the conflicted files are staged."
-assertion: "after the conflicted files are staged with git add, git rebase --continue resumes the paused interactive rebase"
-description: "Abort an interactive rebase and restore the branch."
-assertion: "while an interactive rebase is paused, git rebase --abort restores the original pre-rebase branch state"
-## Conflict Resolution
-Explain how interactive rebase handles conflicts and how to continue or abort after resolving them.
-`after the conflicted files are staged with git add, git rebase --continue resumes the paused interactive rebase`
-`while an interactive rebase is paused, git rebase --abort restores the original pre-rebase branch state`
+Format sample only. These words are not a section_id. Write every section_id from the map, including ones this sample never mentions.
+description: "Add a taxable line to the receipt."
+assertion: "add_line('bread', 4.00) == 'bread 4.00'"
+description: "Reject a negative price."
+assertion: "add_line('bread', -1) raises ValueError"
+## Receipt Lines
+Record each item and its price, and reject a negative price.
+`add_line('bread', 4.00) == 'bread 4.00'`
+`add_line('bread', -1) raises ValueError`
 </shape>
 
 <output_format>

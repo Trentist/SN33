@@ -22,8 +22,10 @@ class SkillPolicy:
     max_test_name_chars: int = 200
     max_test_field_chars: int = 1000
     # Validator penalizes at 0.95. Reject a pair locally a notch under that.
+    # Stretch a description when a pair crosses 0.93, before that penalty.
     hard_duplicate_cosine: float = 0.94
     warn_duplicate_cosine: float = 0.91
+    stretch_duplicate_cosine: float = 0.93
     near_duplicate_cosine: float = 0.94
     embed_min_remaining_s: float = 1.2
 

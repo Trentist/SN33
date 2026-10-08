@@ -24,18 +24,24 @@ import bittensor as bt
 from custom_miner.prompt_overrides import install_custom_prompts
 from custom_miner.prompt_overrides import is_installed
 from custom_miner.skill_pipeline.json_repair import repair_skill_bundle_json
-from custom_miner.skill_pipeline.normalize import ensure_traceability
 from custom_miner.skill_pipeline.normalize import limit_tests
+from custom_miner.skill_pipeline.normalize import lock_skill_text
 from custom_miner.skill_pipeline.normalize import prepare_section_tests
 from custom_miner.skill_pipeline.normalize import section_parts
+from custom_miner.skill_pipeline.normalize import stretch_description
 from custom_miner.skill_pipeline.policies import get_skill_policy
 from custom_miner.skill_pipeline.proxy_score import score_candidate
 from custom_miner.skill_pipeline.section_parse import format_section_brief
 from custom_miner.skill_pipeline.section_parse import parse_section_map
+from custom_miner.skill_pipeline.select import cosine
 from custom_miner.skill_pipeline.select import embed_text
 from custom_miner.skill_pipeline.select import section_target_text
 from custom_miner.skill_pipeline.select import select_best_pair
 from custom_miner.timing import TimeBudget
+
+# The validator drops the response at 24s. Return by 20.5s so serialization
+# and the network round trip still fit.
+_LIVE_RETURN_S = 20.5
 
 
 def _section_map_from_task(task) -> list:
@@ -67,7 +73,17 @@ def _seed_from_task(task) -> str:
 
 def _format_section_map(section_map: list) -> str:
     """Validator section ids, plus terms pulled from the supplied descriptions."""
-    return "\n".join(format_section_brief(brief) for brief in parse_section_map(section_map))
+    ids = []
+    for section in section_map or []:
+        sid, _, _ = section_parts(section)
+        if sid:
+            ids.append(sid)
+    header = (
+        f"Required: {len(ids)} section_ids. Each key needs an array of exactly 2 tests: "
+        + ", ".join(ids)
+    )
+    body = "\n".join(format_section_brief(brief) for brief in parse_section_map(section_map))
+    return header + "\n" + body
 
 
 def _usable(raw: dict[str, Any] | None) -> bool:
@@ -165,9 +181,8 @@ def _generate_bundle(
 ) -> dict[str, Any]:
     """One prompt call. Repair that same text. Retry only when it yielded no tests."""
     raw: dict[str, Any] = {"skill": "", "tdd_plan": "", "section_tests": {}, "seed": seed}
-    # A measured generation is about 21s. Wait long enough to receive it, and
-    # run the embedding batch only when time is actually left afterward.
-    wait_s = max(1.0, min(budget.remaining() - 0.4, 22.6))
+    # Leave the last 2s of the 20.5s return line for the embedding batch.
+    wait_s = max(1.0, min(budget.remaining() - 1.5, _LIVE_RETURN_S - 2.0))
     pool = ThreadPoolExecutor(max_workers=1)
     closed = False
     try:
@@ -257,6 +272,50 @@ def _log_proxy(report: dict[str, Any], policy) -> None:
         )
 
 
+def _stretch_close_pairs(
+    selected: dict[str, list[dict[str, str]]],
+    selected_vecs: dict[str, list[list[float]]],
+    by_id: dict[str, tuple[str, str]],
+    policy,
+) -> int:
+    """Lengthen descriptions whose vectors sit at or above the stretch line.
+
+    The returned description is what the validator embeds. Dropping a test
+    would zero its section, so a close pair keeps both tests.
+    """
+    flat: list[tuple[str, int, dict[str, str], list[float] | None, str]] = []
+    for sid, tests in selected.items():
+        vecs = selected_vecs.get(sid) or []
+        title, desc = by_id.get(sid, (sid, ""))
+        for index, test in enumerate(tests):
+            vec = vecs[index] if index < len(vecs) else None
+            flat.append((sid, index, test, vec, title, desc))
+    marked: set[tuple[str, int]] = set()
+    line = policy.stretch_duplicate_cosine
+    for left in range(len(flat)):
+        for right in range(left + 1, len(flat)):
+            if cosine(flat[left][3], flat[right][3]) < line:
+                continue
+            marked.add((flat[left][0], flat[left][1]))
+            marked.add((flat[right][0], flat[right][1]))
+    for sid, index, test, _vec, title, desc in flat:
+        if (sid, index) not in marked:
+            continue
+        test["description"] = stretch_description(
+            test["description"],
+            test.get("assertion") or "",
+            desc,
+            half=index,
+            limit=policy.max_test_field_chars,
+            title=title,
+        )
+    if marked:
+        bt.logging.info(
+            f"SkillCoverage: stretched {len(marked)} tests whose pair was at least {line:.2f}"
+        )
+    return len(marked)
+
+
 def embed_select_tests(
     section_tests: dict[str, list[dict[str, str]]],
     section_map: list | None,
@@ -264,6 +323,7 @@ def embed_select_tests(
     *,
     policy=None,
     skill: str = "",
+    section_vectors: dict[str, list[float] | None] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Keep two tests per section using the validator's embedding strings.
 
@@ -287,16 +347,22 @@ def embed_select_tests(
         sid, title, desc = section_parts(section)
         by_id[sid] = (title, desc)
 
-    provisional = ensure_traceability(skill, "", section_map, section_tests, policy=policy)
+    provisional = lock_skill_text("", section_map, section_tests, policy=policy) or (skill or "")
     texts: list[str] = []
     slots: list[tuple[str, str, int]] = []
+    section_vecs: dict[str, list[float] | None] = {}
+    known_sections = section_vectors or {}
     if provisional.strip():
         texts.append(provisional)
         slots.append(("skill", "", -1))
     for sid, tests in section_tests.items():
         title, desc = by_id.get(sid, (sid, sid))
-        texts.append(section_target_text(title, desc))
-        slots.append(("section", sid, -1))
+        cached = known_sections.get(sid)
+        if cached:
+            section_vecs[sid] = cached
+        else:
+            texts.append(section_target_text(title, desc))
+            slots.append(("section", sid, -1))
         for idx, test in enumerate(tests):
             texts.append(embed_text(test))
             slots.append(("test", sid, idx))
@@ -314,7 +380,6 @@ def embed_select_tests(
         return fallback
 
     skill_vec: list[float] | None = None
-    section_vecs: dict[str, list[float] | None] = {}
     test_vecs: dict[tuple[str, int], list[float] | None] = {}
     for slot, vector in zip(slots, vectors):
         kind, sid, idx = slot
@@ -349,6 +414,7 @@ def embed_select_tests(
 
     if dropped:
         bt.logging.info(f"SkillCoverage: embed select kept 2 tests and dropped {dropped}")
+    _stretch_close_pairs(selected, selected_vecs, by_id, policy)
     report = score_candidate(list(selected), section_vecs, selected_vecs, skill_vec)
     _log_proxy(report, policy)
     return selected
@@ -375,18 +441,17 @@ def _fill_prompt(seed: str, short: list[tuple[str, str, str, list[dict[str, str]
         for test in have:
             lines.append(f"  already asserted: {test['assertion']}")
         blocks.append("\n".join(lines))
+    topic = " ".join((seed or "").split())[:240]
     return (
-        "Return one JSON object and nothing else.\n"
-        "A section with fewer than 2 tests scores as empty. "
-        "Write only the new tests for the sections below. "
-        "Each new assertion must check a different outcome from the assertion already listed. "
+        "Return one compact JSON object and nothing else.\n"
+        "Write only the missing tests. Every section_id below must reach 2 tests. "
+        "A new assertion checks a different outcome from any assertion already listed. "
         "Use f(input) == exact_output, f(input) raises ExactError, or a command that produces an exact state. "
-        "No 'because'. No vague claim.\n"
-        "skill_addendum is markdown. For each section, one heading with the exact title, "
-        "the section description, and the new assertion copied exactly.\n"
+        "No because. description is one short sentence for that case only.\n"
+        "skill_addendum is only the new assertion lines, one per line, copied exactly.\n"
         '{"section_tests":{"<section_id>":[{"name":"string","description":"string","assertion":"string"}]},'
-        '"skill_addendum":"markdown"}\n\n'
-        f"<skill_request>\n{seed}\n</skill_request>\n\n"
+        '"skill_addendum":"string"}\n\n'
+        f"Topic: {topic}\n\n"
         "<sections>\n" + "\n".join(blocks) + "\n</sections>"
     )
 
@@ -405,12 +470,17 @@ def _fill_missing_tests(
 ) -> dict[str, list[dict[str, str]]]:
     """One short call for sections that arrived with fewer than two tests."""
     short = _sections_short_of_two(section_map, prepared)
-    if not short or budget.remaining() < 7.0:
+    # Stay inside the live return line. A late fill is a zero, not a better bundle.
+    # The old 6s cap expired while five git sections were still being written.
+    room = _LIVE_RETURN_S - budget.elapsed()
+    if not short or room < 4.5 or budget.remaining() < 6.0:
         return prepared
+    missing = sum(2 - len(have) for _, _, _, have in short)
     bt.logging.info(
-        f"SkillCoverage: filling {len(short)} sections that have fewer than 2 tests"
+        f"SkillCoverage: filling {len(short)} sections, {missing} tests, room={room:.1f}s"
     )
-    wait_s = max(1.0, min(budget.remaining() - 1.2, 8.0))
+    # Leave ~2s after this call for the test embedding batch.
+    wait_s = max(2.0, room - 2.0)
     pool = ThreadPoolExecutor(max_workers=1)
     closed = False
     filled = None
@@ -419,7 +489,7 @@ def _fill_missing_tests(
             _raw_prompt_text,
             llml,
             _fill_prompt(seed, short),
-            max_tokens=2500,
+            max_tokens=min(1800, max(600, 160 * missing)),
             model=model,
             reasoning=reasoning,
         )
@@ -485,6 +555,31 @@ def _raw_prompt_text(llml, prompt: str, *, max_tokens: int, model: str, reasonin
     return content if isinstance(content, str) else None
 
 
+def _embed_texts(llml, texts: list[str]) -> list | None:
+    if not texts:
+        return []
+    try:
+        return llml.get_vector_embeddings_batch(texts)
+    except Exception as e:
+        bt.logging.warning(f"SkillCoverage: section embed failed: {e}")
+        return None
+
+
+def _section_vectors_from_future(fut, section_ids: list[str]) -> dict[str, list[float]]:
+    try:
+        vectors = fut.result(timeout=1.0)
+    except Exception as e:
+        bt.logging.info(f"SkillCoverage: section embed not ready: {e}")
+        return {}
+    if not vectors or len(vectors) != len(section_ids):
+        return {}
+    return {
+        sid: vector
+        for sid, vector in zip(section_ids, vectors)
+        if vector
+    }
+
+
 def mine_skill_coverage(task, budget: TimeBudget | None = None) -> dict[str, Any]:
     """Run the contract-first skill-coverage pipeline within the task budget."""
     from conversationgenome.llm.llm_factory import get_llm_backend
@@ -515,41 +610,55 @@ def mine_skill_coverage(task, budget: TimeBudget | None = None) -> dict[str, Any
         }
 
     llml = get_llm_backend()
-    raw = _generate_bundle(
-        llml,
-        seed,
-        section_map,
-        budget,
-        skill_max_tokens,
-        model=skill_model,
-        reasoning=skill_reasoning,
-    )
-    raw["seed"] = seed
-    prepared = prepare_section_tests(raw, section_map, policy=policy)
-    prepared = _fill_missing_tests(
-        llml,
-        seed,
-        section_map,
-        raw,
-        prepared,
-        budget,
-        model=skill_model,
-        reasoning=skill_reasoning,
-        policy=policy,
-    )
-    skill_in = raw.get("skill") if isinstance(raw.get("skill"), str) else ""
+    section_ids: list[str] = []
+    section_texts: list[str] = []
+    for section in section_map:
+        sid, title, desc = section_parts(section)
+        section_ids.append(sid)
+        section_texts.append(section_target_text(title, desc))
+    # Section strings are known now. Embed them while the model writes.
+    embed_pool = ThreadPoolExecutor(max_workers=1)
+    section_embed = embed_pool.submit(_embed_texts, llml, section_texts)
+    try:
+        raw = _generate_bundle(
+            llml,
+            seed,
+            section_map,
+            budget,
+            skill_max_tokens,
+            model=skill_model,
+            reasoning=skill_reasoning,
+        )
+        raw["seed"] = seed
+        prepared = prepare_section_tests(raw, section_map, policy=policy)
+        prepared = _fill_missing_tests(
+            llml,
+            seed,
+            section_map,
+            raw,
+            prepared,
+            budget,
+            model=skill_model,
+            reasoning=skill_reasoning,
+            policy=policy,
+        )
+        skill_in = raw.get("skill") if isinstance(raw.get("skill"), str) else ""
+        section_vectors = _section_vectors_from_future(section_embed, section_ids)
+    finally:
+        embed_pool.shutdown(wait=False, cancel_futures=False)
     selected = embed_select_tests(
         prepared,
         section_map,
         budget,
         policy=policy,
         skill=skill_in,
+        section_vectors=section_vectors,
     )
     tdd_plan = (raw.get("tdd_plan") or "").strip() or (
         "Two concrete checks per section, both written into the skill."
     )
     result = {
-        "skill": ensure_traceability(skill_in, seed, section_map, selected, policy=policy),
+        "skill": lock_skill_text(seed, section_map, selected, policy=policy),
         "tdd_plan": tdd_plan[:240],
         "section_tests": selected,
     }

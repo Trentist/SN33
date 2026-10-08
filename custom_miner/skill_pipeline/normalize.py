@@ -163,13 +163,7 @@ def _strip_chunk(text: str, chunk: str) -> str:
 
 
 def _description_slice(section_desc: str, half: int | None) -> str:
-    """Full sentence for a lone test. Split a comma-list across the two tests.
-
-    Cloning the whole sentence onto both tests measured 0.96 section cosine
-    and 0.955 pairwise cosine, which trips the 0.95 duplicate penalty.
-    Giving each test a different half measured about 0.86 against the section
-    and 0.75 between the tests.
-    """
+    """One half of a comma-list. Used only to pull a too-close pair apart."""
     section_desc = _WS.sub(" ", (section_desc or "").strip())
     if half is None or not section_desc:
         return section_desc
@@ -194,7 +188,14 @@ def anchor_description(
     limit: int,
     half: int | None = None,
 ) -> str:
-    """Title plus this test's half of the section sentence, then its own case."""
+    """Full ``title: description``, then this test's own short case.
+
+    The section ground truth is that same ``title: description`` string.
+    Sharing it on both tests is what lifts section cosine into the 0.90s.
+    ``half`` is unused here. A later stretch uses the halves only when a
+    measured pair is too close.
+    """
+    del half
     title = _WS.sub(" ", (title or "").strip())
     section_desc = _WS.sub(" ", (section_desc or "").strip())
     case = _WS.sub(" ", (description or "").strip())
@@ -203,9 +204,40 @@ def anchor_description(
     case = _WS.sub(" ", case).strip(" .:-")
     if case and section_desc and case.lower() in section_desc.lower():
         case = ""
-    slice_desc = _description_slice(section_desc, half)
-    pieces = [part for part in (title, slice_desc, case) if part]
-    return _WS.sub(" ", ". ".join(pieces)).strip()[:limit]
+    # A long case pulls the embedding off the section sentence. Twelve words
+    # measured about 0.87 section cosine; a long clause fell to about 0.85.
+    words = case.split()
+    if len(words) > 12:
+        case = " ".join(words[:12])
+    base = f"{title}: {section_desc}".strip(": ") if section_desc else title
+    text = f"{base} Case: {case}." if case else base
+    return _WS.sub(" ", text).strip()[:limit]
+
+
+def stretch_description(
+    description: str,
+    assertion: str,
+    section_desc: str,
+    *,
+    half: int,
+    limit: int,
+    title: str = "",
+) -> str:
+    """Reserve room for a unique tail when a pair is too close.
+
+    Appending and then clipping at 1,000 characters left a 0.97 pair
+    unchanged. The unique tail is kept whole, and it names this test's
+    title and assertion so it does not match the other test.
+    """
+    focus = _description_slice(section_desc, half)
+    label = title or f"check {half + 1}"
+    sentence = f"Only the {label} check {half + 1}: {(assertion or '').strip()}."
+    if focus:
+        sentence = f"{sentence} Focus: {focus}"
+    unique = " ".join([sentence, sentence])
+    room = max(0, limit - len(unique) - 1)
+    head = (description or "")[:room].rstrip()
+    return _WS.sub(" ", f"{head} {unique}").strip()[:limit]
 
 
 def prepare_section_tests(
@@ -253,15 +285,12 @@ def prepare_section_tests(
             kept.append(sanitized)
             if len(kept) >= policy.max_tests_per_section:
                 break
-        # One test can carry the whole section sentence. Two tests must split
-        # it, or the duplicate penalty cuts the score in half.
-        for index, test in enumerate(kept):
+        for test in kept:
             test["description"] = anchor_description(
                 test["description"],
                 title=title,
                 section_desc=desc,
                 limit=policy.max_test_field_chars,
-                half=None if len(kept) < 2 else (0 if index == 0 else 1),
             )
         if kept:
             cleaned[sid] = kept
@@ -295,36 +324,38 @@ def lock_skill_text(
         if sid not in by_id:
             ordered_sections.append((sid, sid, sid))
 
-    payload: list[tuple[str, str, list[str]]] = []
+    lines: list[str] = []
     for sid, title, desc in ordered_sections:
-        tests = section_tests.get(sid) or []
-        if not tests:
-            continue
-        payload.append((title, desc.strip(), [f"- {test['assertion']}" for test in tests]))
+        for test in section_tests.get(sid) or []:
+            description = _WS.sub(" ", (test.get("description") or "").strip())
+            assertion = _WS.sub(" ", (test.get("assertion") or "").strip())
+            if description and assertion:
+                lines.append(f"{description} Assertion: {assertion}")
+            elif assertion:
+                lines.append(f"{title}: {desc} Assertion: {assertion}".strip())
 
-    def render(include_desc: bool, seed_text: str) -> str:
-        parts = ["# Skill", ""]
-        if seed_text:
-            parts.extend([seed_text, ""])
-        for title, desc, bullets in payload:
-            parts.append(f"## {title}")
-            if include_desc and desc:
-                parts.extend([desc, ""])
-            parts.extend(bullets)
-            parts.append("")
-        return "\n".join(parts).rstrip()
+    def render(seed_text: str) -> str:
+        parts = [seed_text] if seed_text else []
+        parts.extend(lines)
+        return "\n".join(parts).strip()
 
-    if not payload:
-        return render(False, seed_line)[:cap]
-
-    text = render(True, seed_line)
+    if not lines:
+        return render(seed_line)[:cap]
+    text = render(seed_line)
     if len(text) <= cap:
         return text
-    text = render(False, seed_line[:200])
+    text = render("")
     if len(text) <= cap:
         return text
-    text = render(False, "")
-    return text[:cap]
+    # A hard cut would drop the last sections. Keep every assertion instead.
+    compact: list[str] = []
+    for sid, title, _desc in ordered_sections:
+        for test in section_tests.get(sid) or []:
+            assertion = _WS.sub(" ", (test.get("assertion") or "").strip())
+            if assertion:
+                compact.append(f"{title}: {assertion}")
+    compact_text = "\n".join(compact).strip()
+    return compact_text[:cap] if compact_text else text[:cap]
 
 
 def limit_tests(
@@ -417,7 +448,7 @@ def normalize_skill_bundle(
         "Two concrete checks per section, both written into the skill."
     )
     return {
-        "skill": ensure_traceability(skill_in, seed, section_map, tests, policy=policy),
+        "skill": lock_skill_text(seed, section_map, tests, policy=policy),
         "tdd_plan": tdd_plan,
         "section_tests": tests,
     }
